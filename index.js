@@ -112,25 +112,144 @@ exports.fromMapFileComment = function (comment, dir) {
 
 // Finds last sourcemap comment in file or returns null if none was found
 exports.fromSource = function (content) {
-  var m = content.match(exports.commentRegex);
-  return m ? exports.fromComment(m.pop()) : null;
+  var comments = exports.getComments(content, exports.commentRegex);
+  if (!comments.length) return null;
+  return exports.fromComment(comments.pop().value);
 };
 
 // Finds last sourcemap comment in file or returns null if none was found
 exports.fromMapFileSource = function (content, dir) {
-  var m = content.match(exports.mapFileCommentRegex);
-  return m ? exports.fromMapFileComment(m.pop(), dir) : null;
+  var comments = exports.getComments(content, exports.mapFileCommentRegex);
+  if (!comments.length) return null;
+  return exports.fromMapFileComment(comments.pop().value, dir);
 };
 
 exports.removeComments = function (src) {
-  return src.replace(exports.commentRegex, '');
+  var comments = exports.getComments(src, exports.commentRegex);
+  return removeRanges(src, comments);
 };
 
 exports.removeMapFileComments = function (src) {
-  return src.replace(exports.mapFileCommentRegex, '');
+  var comments = exports.getComments(src, exports.mapFileCommentRegex);
+  return removeRanges(src, comments);
 };
 
 exports.generateMapFileComment = function (file, options) {
   var data = 'sourceMappingURL=' + file;
   return options && options.multiline ? '/*# ' + data + ' */' : '//# ' + data;
 };
+
+function removeRanges(str, ranges) {
+  var result = "";
+  var lastEnd = 0;
+  for (var i = 0; i < ranges.length; i++) {
+    result += str.slice(lastEnd, ranges.start);
+  }
+  return result + str.slice(lastEnd);
+}
+
+exports.getComments = getComments;
+function getComments(code, filter) {
+  var tplStack = [];
+  var tplIndex = -1;
+  var comments = [];
+
+  var i = 0;
+  while (i < code.length) {
+    var ch = code[i];
+    switch (ch) {
+      // Parse comments
+      case '/':
+        var next = code[i + 1];
+        if (next === '/') {
+          // This is a single line comment, which ends with a newline character
+          i = indexOf2(code, '\n', '\r', start + 2);
+
+          var value = code.slice(start, i);
+          if (filter.test(value)) {
+            comments.push({ start: start, end: i, value: value });
+          }
+
+          // Skip \n or \r
+          i++;
+        } else if (next === '*') {
+          // This is a single line comment, which ends with /*
+          i = indexOf(code, '*/', start + 2);
+          // Skip */
+          i += 2;
+
+          var value = code.slice(start, i);
+          if (filter.test(value)) {
+            comments.push({ start: start, end: i, value: value });
+          }
+        } else {
+          i++;
+        }
+        break;
+
+      // Skip strings with " and '. Look for the next matching quote but,
+      // if it is escaped, skip it and continue looking.
+      case '"':
+      case '\'':
+        // Search the first unescaped closing quote
+        do {
+          i = indexOf(code, ch, i + 1);
+        } while (i !== Infinity && isEscaped(code, i));
+        i++;
+        break;
+
+      // Parse template literals (start reading the code from the ` case)
+      // When there is a `, go to the first unescaped occurrence of ` or ${.
+      // If there is `, the template doesn't have any substitution and we
+      // can skip it. If there is ${, we store in tplStack[tplIndex] the
+      // number of unmatched {. When we parse } and there are 0 unmatched {,
+      // it means that we finished parsing the substitution and we are inside
+      // the template's string contents again. We look for the next unescaped
+      // ` or ${ and start the process again.
+      case '{':
+        if (tplIndex > -1) tplStack[tplIndex]++;
+        i++;
+        break;
+      case '}':
+        i++;
+        if (tplIndex === -1 || --tplStack[tplIndex--] !== 0) break;
+        /* falls through */
+      case '`':
+        do {
+          i = indexOf2(code, '`', '${', i + 1);
+        } while (i !== Infinity && isEscaped(code, i));
+        i++; // skip ` or $
+
+        if (code[i - 1] === '`') break; // no substitutions
+
+        i++; // skip {
+        tplStack[++tplIndex] = 1; // 1 and not 0 because we already parsed {
+        break;
+      
+      default:
+        i++;
+    }
+  }
+
+  return comments;
+};
+
+
+function isEscaped(code, index) {
+  var escaped = false;
+  while (code[--index] === '\\') escaped = !escaped;
+  return escaped;
+}
+
+// This is the same as String#indexOf, but returns Infinity instead of -1.
+// This helps avoiding infinite loops, because the index never decreases.
+// In case of unmatched characters (e.g. unclosed strings), it will simply
+// stop looping through the code.
+function indexOf(str, search, start) {
+  var i = str.indexOf(search, start);
+  return i === -1 ? Infinity : i;
+}
+
+function indexOf2(str, a, b, start) {
+  return Math.min(indexOf(str, a, start), indexOf(str, b, start));
+}

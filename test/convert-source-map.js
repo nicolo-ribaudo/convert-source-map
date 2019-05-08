@@ -147,6 +147,21 @@ test('remove map file comments', function (t) {
   t.end()
 })
 
+test('fake comments', function (t) {
+  var foo = [
+  , '`'
+  , '/*# sourceMappingURL=foo.js.map */'
+  , '`'
+  , '/*'
+  , '//# sourceMappingURL=foo.js.map'
+  , '*/'
+  ].join('\n');
+
+  t.equal(convert.removeMapFileComments(foo), foo);
+  t.equal(convert.removeComments(foo), foo);
+  t.end();
+})
+
 test('pretty json', function (t) {
   var mod = convert.fromJSON(json).toJSON(2)
     , expected = JSON.stringify(obj, null, 2);

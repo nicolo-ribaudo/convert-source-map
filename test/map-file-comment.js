@@ -68,3 +68,5 @@ test('\nresolving a /*# sourceMappingURL=data:application/json;base64,... */ sty
   )
   t.end()
 })
+
+test('\ncomments inside strings are ignored');
